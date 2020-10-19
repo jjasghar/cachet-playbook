@@ -1,0 +1,190 @@
+---
+- name: Install cachet on a CentOS 8 machine
+  hosts: all
+
+  tasks:
+    - name: Fetch the variables from var file
+      include_vars:
+        file: ../vars/main.yml
+
+    - name: install epel-release
+      dnf:
+        name:
+          - epel-release
+        state: latest
+
+    - name: Ensure SELinux is set to disabled mode
+      lineinfile:
+        path: /etc/selinux/config
+        regexp: '^SELINUX='
+        line: 'SELINUX=disabled'
+
+    - name: install the lamp stack
+      dnf:
+        name:
+          - php-mysqlnd 
+          - php-fpm 
+          - mariadb-server 
+          - httpd 
+          - tar 
+          - curl 
+          - php-json
+          - php-xml
+          - python3
+          - unzip
+          - git
+          - php
+          - php-mbstring
+          - php-gd
+        state: latest
+
+    - name: make sure pymysql is present
+      pip:
+        name: pymysql
+        state: present
+
+    - name: start httpd
+      service:
+        name: httpd
+        enabled: yes
+        state: started
+
+    - name: start mariadb
+      service:
+        name: mariadb
+        enabled: yes
+        state: started
+
+    - name: Set the root password 
+      mysql_user: 
+        login_user: root 
+        login_password: "" 
+        user: root 
+        password: "{{ mariadb_root_password }}"
+      ignore_errors: yes 
+    
+    - name: Secure the root user for IPV6 localhost (::1)
+      mysql_user: 
+        login_user: root 
+        login_password: "{{ mariadb_root_password }}" 
+        user: root 
+        password: "{{ mariadb_root_password }}" 
+        host: "::1"
+    
+    - name: Secure the root user for IPV4 localhost (127.0.0.1)
+      mysql_user: 
+        login_user: root 
+        login_password: "{{ mariadb_root_password }}" 
+        user: root 
+        password: "{{ mariadb_root_password }}" 
+        host: "127.0.0.1"
+    
+    - name: Secure the root user for localhost domain
+      mysql_user: 
+        login_user: root 
+        login_password: "{{ mariadb_root_password }}" 
+        user: root 
+        password: "{{ mariadb_root_password }}" 
+        host: "localhost"
+    
+    - name: Secure the root user for server_hostname domain
+      mysql_user: 
+        login_user: root 
+        login_password: "{{ mariadb_root_password }}" 
+        user: root 
+        password: "{{ mariadb_root_password }}" 
+        host: "{{ ansible_fqdn }}"
+    
+    - name: Deletes anonymous server user
+      mysql_user: 
+        login_user: root 
+        login_password: "{{ mariadb_root_password }}" 
+        user: "" 
+        host_all: yes 
+        state: absent
+    
+    - name: Create the cachet db
+      mysql_db: 
+        login_user: root 
+        login_password: "{{ mariadb_root_password }}" 
+        db: "{{ cachet_db }}"
+        state: present
+    
+    - name: Create cachet user
+      mysql_user: 
+        login_user: root 
+        login_password: "{{ mariadb_root_password }}" 
+        user: "{{ cachet_db_user }}"
+        password: "{{ cachet_db_password }}"
+        priv: '*.*:ALL,GRANT'
+        state: present
+
+    - name: Removes the test database
+      mysql_db: 
+        login_user: root 
+        login_password: "{{ mariadb_root_password }}" 
+        db: test
+        state: absent
+
+    - name: pull the cachet to the machine
+      git:
+        repo: https://github.com/cachethq/Cachet.git
+        dest: /var/www/html
+        clone: yes
+        version: 'v2.3.9'
+
+    - name: put the .env file in the correct place
+      template:
+        src: ../templates/env.j2
+        dest: /var/www/html/.env
+        owner: apache
+        group: apache
+        mode: '0666'
+
+    - name: install composer
+      shell:
+        cmd: curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+
+    - name: run composer
+      shell:
+        cmd: composer install --no-dev -o
+        chdir: /var/www/html/
+
+    - name: set application key
+      shell:
+        cmd: php artisan key:generate
+        chdir: /var/www/html/
+
+    - name: run the cachet install command
+      shell:
+        cmd: php artisan app:install
+        chdir: /var/www/html/
+
+    - name: put the apache.conf in the correct place
+      template:
+        src: ../templates/cachet_apache.conf.j2
+        dest: /etc/httpd/conf.d/cachet_apache.conf
+        owner: apache
+        group: apache
+        mode: '0666'
+
+    - name: change ownership to apache
+      file:
+        path: /var/www/html
+        recurse: yes
+        owner: apache
+        group: apache
+
+    - name: restart httpd
+      service:
+        name: httpd
+        state: restarted
+
+    - name: stop and disable firewall
+      service:
+        name: firewalld
+        state: stopped
+        enabled: no
+
+    - name: reboot
+      reboot:

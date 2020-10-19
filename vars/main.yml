@@ -1,0 +1,8 @@
+---
+mariadb_root_password: 'P@assw0rd!'
+ansible_python_interperter: '/usr/bin/python3'
+cachet_db: 'cachet'
+cachet_db_user: 'cachet'
+cachet_db_password: 'cachet'
+cachet_db_host: 'localhost'
+cachet_version: '3.3.1'
